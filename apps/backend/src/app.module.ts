@@ -9,6 +9,16 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthModule } from './health/health.module';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
+import { PrismaModule } from './prisma/prisma.module';
+import { ProductsModule } from './catalog/products/products.module';
+import { CategoriesModule } from './catalog/categories/categories.module';
+
+import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
+import { CustomersModule } from './customers/customers.module';
+import { CartModule } from './cart/cart.module';
+import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -19,6 +29,8 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
       validationSchema: Joi.object({
         NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
         PORT: Joi.number().default(3000),
+        JWT_SECRET: Joi.string().required(),         // <-- Added to enforce security
+        JWT_REFRESH_SECRET: Joi.string().required(), // <-- Added to enforce security
       }),
     }),
     
@@ -40,8 +52,8 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
               context: 'HTTP',
             }),
             transport: isProduction
-              ? undefined // In production, output raw fast JSON
-              : { target: 'pino-pretty', options: { singleLine: true } }, // In development, format nicely
+              ? undefined
+              : { target: 'pino-pretty', options: { singleLine: true } },
             level: isProduction ? 'info' : 'debug',
           },
         };
@@ -49,6 +61,15 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     }),
 
     HealthModule,
+    PrismaModule,
+    ProductsModule,
+    CategoriesModule,
+    AuthModule,
+    UsersModule,
+    CustomersModule,
+    CartModule,
+    OrdersModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [
@@ -60,10 +81,9 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
   ],
 })
 export class AppModule implements NestModule {
-  // Wire up the custom LoggerMiddleware here
   configure(consumer: MiddlewareConsumer) {
     consumer
       .apply(LoggerMiddleware)
-      .forRoutes('*'); // Applies this to every single route in your application
+      .forRoutes('*'); 
   }
 }

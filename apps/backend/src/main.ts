@@ -11,23 +11,26 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
-  // Use Pino as the global logger
+  // 1. Prefix all routes with /api (Must be done BEFORE Swagger)
+ app.setGlobalPrefix('api/v1');
+
+  // 2. Use Pino as the global logger
   app.useLogger(app.get(Logger));
 
-  // Enable Security Headers
+  // 3. Enable Security Headers
   app.use(helmet());
 
-  // Enable CORS
+  // 4. Enable CORS for frontend origins
   app.enableCors({
-    origin: ['http://localhost:3001', 'https://knackherbal.com'],
+    origin: ['http://localhost:3000', 'http://localhost:3001', 'https://knackherbal.com'],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true, 
   });
 
-  // Enable GZIP Compression
+  // 5. Enable GZIP Compression
   app.use(compression());
 
-  // Enable Global Validation
+  // 6. Enable Global Validation
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
@@ -36,13 +39,13 @@ async function bootstrap() {
     }),
   );
 
-  // Register Global Exception Filter
+  // 7. Register Global Exception Filter
   app.useGlobalFilters(new GlobalExceptionFilter());
 
-  // Register Transform Interceptor
+  // 8. Register Transform Interceptor
   app.useGlobalInterceptors(new TransformInterceptor());
 
-  // Configure Swagger API Documentation
+  // 9. Configure Swagger API Documentation
   const config = new DocumentBuilder()
     .setTitle('Knack Herbal API')
     .setDescription('The official backend API documentation for Knack Herbal.')
@@ -61,9 +64,13 @@ async function bootstrap() {
     .build();
     
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('/api/docs', app, document);
+  SwaggerModule.setup('api/v1/docs', app, document);
 
-  // Start the server
-  await app.listen(3000);
+  // 10. Start the server (Using 3000 so Next.js can run on 3000 without conflict)
+  const PORT = process.env.PORT || 3000; // (or 3001 if you changed it)
+await app.listen(PORT);
+
+console.log(`🚀 API is running on: http://localhost:${PORT}/api/v1`);
+console.log(`📚 Swagger Docs available at: http://localhost:${PORT}/api/v1/docs`);
 }
 bootstrap();

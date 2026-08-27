@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+/* ── Knack Herbal Design Tokens ─────────────────────────────────────────── */
+:root {
+  /* Brand */
+  --brand-primary: #5c7a5c;       /* muted sage green */
+  --brand-primary-dark: #3d5e3d;
+  --brand-primary-light: #8aad8a;
+  --brand-accent: #c9a96e;        /* warm gold / beige */
+  --brand-accent-light: #e4cfa3;
+
+  /* Surface */
+  --background: #fafaf8;          /* warm off-white */
+  --surface: #ffffff;
+  --surface-muted: #f5f4f0;       /* soft cream */
+  --border: #e8e5de;
+
+  /* Text */
+  --foreground: #1c1c1a;          /* dark charcoal */
+  --foreground-muted: #6b6b63;
+  --foreground-subtle: #9c9c92;
+
+  /* Semantic */
+  --success: #4a7c59;
+  --warning: #c9a96e;
+  --error: #c0392b;
+
+  /* Spacing */
+  --radius: 0.5rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-muted: var(--foreground-muted);
+  --color-subtle: var(--foreground-subtle);
+  --color-brand: var(--brand-primary);
+  --color-brand-dark: var(--brand-primary-dark);
+  --color-brand-light: var(--brand-primary-light);
+  --color-accent: var(--brand-accent);
+  --color-accent-light: var(--brand-accent-light);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-playfair);
+  --radius-DEFAULT: var(--radius);
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+* {
+  border-color: var(--border);
+}
+
+/* scroll-behavior on html causes a Next.js warning — apply via CSS only */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans, system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Typography helpers ──────────────────────────────────────────────────── */
+.font-display {
+  font-family: var(--font-display, Georgia, serif);
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--surface-muted);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground-subtle);
+}
