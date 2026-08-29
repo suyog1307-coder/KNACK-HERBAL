@@ -68,7 +68,11 @@ async function bootstrap() {
 
   // 10. Start the server (Using 3000 so Next.js can run on 3000 without conflict)
   const PORT = process.env.PORT || 3000; // (or 3001 if you changed it)
-await app.listen(PORT);
+
+  // 11. Graceful shutdown
+  app.enableShutdownHooks();
+
+  await app.listen(PORT);
 
 console.log(`🚀 API is running on: http://localhost:${PORT}/api/v1`);
 console.log(`📚 Swagger Docs available at: http://localhost:${PORT}/api/v1/docs`);

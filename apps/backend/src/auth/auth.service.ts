@@ -2,6 +2,7 @@ import {
   Injectable,
   ConflictException,
   UnauthorizedException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -10,8 +11,11 @@ import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import { UsersService } from '../users/users.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 /**
  * NOTE: Every method returns a plain object.
@@ -28,6 +32,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -183,5 +188,103 @@ export class AuthService {
 
     const { passwordHash: _ph, ...safeUser } = user;
     return safeUser;
+  }
+
+  // ─── OTP: Send ────────────────────────────────────────────────────────────
+
+  async sendOtp(identifier: string, type: 'email' | 'phone') {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 min
+
+    const user = type === 'email'
+      ? await this.prisma.user.findUnique({ where: { email: identifier } })
+      : await this.prisma.user.findUnique({ where: { phone: identifier } });
+
+    await this.prisma.oTP.create({
+      data: {
+        code,
+        userId: user?.id,
+        email: type === 'email' ? identifier : undefined,
+        phone: type === 'phone' ? identifier : undefined,
+        expiresAt,
+      },
+    });
+
+    // Send OTP via appropriate channel
+    if (type === 'email') {
+      await this.notifications.sendOtpEmail(identifier, code);
+    } else {
+      await this.notifications.sendSms({ to: identifier, message: `Your Knack Herbal OTP is ${code}. Valid for 10 minutes.` });
+    }
+
+    return { message: 'OTP sent successfully' };
+  }
+
+  // ─── OTP: Verify ──────────────────────────────────────────────────────────
+
+  async verifyOtp(identifier: string, code: string) {
+    const otp = await this.prisma.oTP.findFirst({
+      where: {
+        code,
+        used: false,
+        expiresAt: { gt: new Date() },
+        OR: [{ email: identifier }, { phone: identifier }],
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!otp) throw new BadRequestException('Invalid or expired OTP');
+
+    await this.prisma.oTP.update({ where: { id: otp.id }, data: { used: true } });
+
+    return { message: 'OTP verified successfully', verified: true };
+  }
+
+  // ─── Forgot Password ──────────────────────────────────────────────────────
+
+  async forgotPassword(dto: ForgotPasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+
+    // Always return success to prevent user enumeration
+    if (!user) return { message: 'If this email exists, a reset link has been sent' };
+
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await this.prisma.oTP.create({
+      data: { code: token, userId: user.id, email: dto.email, expiresAt },
+    });
+
+    const resetUrl = `${this.config.get('FRONTEND_URL') ?? 'http://localhost:3000'}/reset-password?token=${token}`;
+    await this.notifications.sendPasswordResetEmail(dto.email, resetUrl);
+    this.logger.debug(`[FORGOT PASSWORD] Reset URL for ${dto.email}: ${resetUrl}`);
+
+    return { message: 'If this email exists, a reset link has been sent' };
+  }
+
+  // ─── Reset Password ───────────────────────────────────────────────────────
+
+  async resetPassword(dto: ResetPasswordDto) {
+    const otp = await this.prisma.oTP.findFirst({
+      where: { code: dto.token, used: false, expiresAt: { gt: new Date() } },
+      include: { user: true },
+    });
+
+    if (!otp || !otp.userId) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: otp.userId! }, data: { passwordHash } });
+      await tx.oTP.update({ where: { id: otp.id }, data: { used: true } });
+      await tx.refreshToken.updateMany({
+        where: { userId: otp.userId!, revoked: false },
+        data: { revoked: true },
+      });
+    });
+
+    return { message: 'Password reset successfully. Please log in with your new password.' };
   }
 }

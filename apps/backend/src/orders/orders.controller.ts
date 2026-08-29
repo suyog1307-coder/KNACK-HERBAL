@@ -29,7 +29,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
-  // ─── Customer routes ────────────────────────────────────────────────────
+  // ─── Customer routes ──────────────────────────────────────────────────────
 
   @ApiOperation({ summary: 'Convert active cart into a new pending order' })
   @Roles('CUSTOMER')
@@ -53,7 +53,27 @@ export class OrdersController {
     return this.ordersService.getOrderById(id, req.user.sub);
   }
 
-  // ─── Admin routes ────────────────────────────────────────────────────────
+  @ApiOperation({ summary: 'Cancel a pending or confirmed order' })
+  @ApiParam({ name: 'id', description: 'Order UUID' })
+  @Roles('CUSTOMER')
+  @Patch('my-orders/:id/cancel')
+  cancelOrder(@Param('id') id: string, @Request() req) {
+    return this.ordersService.cancelOrder(id, req.user.sub);
+  }
+
+  @ApiOperation({ summary: 'Request a return on a delivered order' })
+  @ApiParam({ name: 'id', description: 'Order UUID' })
+  @Roles('CUSTOMER')
+  @Patch('my-orders/:id/return')
+  requestReturn(
+    @Param('id') id: string,
+    @Request() req,
+    @Body() dto: { reason: string },
+  ) {
+    return this.ordersService.requestReturn(id, req.user.sub, dto.reason);
+  }
+
+  // ─── Admin routes ─────────────────────────────────────────────────────────
 
   @ApiOperation({ summary: '[Admin] List all orders' })
   @Roles('ADMIN')

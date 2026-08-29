@@ -4,12 +4,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PricingUtil } from '../common/utils/gst.util';
 import { OrderStatus } from '@prisma/client';
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
@@ -97,7 +101,7 @@ export class OrdersService {
     const orderNumber = await this.generateOrderNumber();
 
     // 6. Persist everything in a single transaction
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       // a. Create the Order
       const order = await tx.order.create({
         data: {
@@ -154,6 +158,15 @@ export class OrdersService {
 
       return order;
     });
+
+    // Fire order confirmation email (outside transaction — non-critical)
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+    if (user?.email) {
+      // result is the returned order from the transaction above
+      void this.notifications.sendOrderConfirmation(user.email, result.orderNumber, result.totalAmount);
+    }
+
+    return result;
   }
 
   /** Return all orders for the authenticated customer, newest first */
@@ -203,12 +216,63 @@ export class OrdersService {
     });
   }
 
+  /**
+   * Customer requests a return on a DELIVERED order.
+   * Restores inventory and transitions order to RETURN_REQUESTED.
+   */
+  async requestReturn(orderId: string, userId: string, reason: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      include: { items: { include: { product: { include: { inventories: true } } } } },
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+
+    if (order.status !== OrderStatus.DELIVERED) {
+      throw new BadRequestException(
+        `Only delivered orders can be returned. Current status: ${order.status}`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.RETURN_REQUESTED },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId,
+          status: OrderStatus.RETURN_REQUESTED,
+          notes: `Return requested by customer. Reason: ${reason}`,
+        },
+      });
+
+      // Restore stock for returned items
+      for (const item of order.items) {
+        const inventory = item.product.inventories[0];
+        if (inventory) {
+          await tx.inventoryTransaction.create({
+            data: {
+              inventoryId: inventory.id,
+              type: 'RETURN',
+              quantity: item.quantity,
+              reason: `Return requested for order ${order.orderNumber}`,
+            },
+          });
+        }
+      }
+
+      return updated;
+    });
+  }
+
   /** Update the status of any order and append to its history (admin) */
   async updateOrderStatus(orderId: string, status: OrderStatus, notes?: string) {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found');
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.order.update({
         where: { id: orderId },
         data: { status },
@@ -217,6 +281,70 @@ export class OrdersService {
       await tx.orderStatusHistory.create({
         data: { orderId, status, notes: notes ?? null },
       });
+
+      return updated;
+    });
+
+    // Notify customer of status change for key milestones
+    const notifyStatuses: OrderStatus[] = [
+      OrderStatus.CONFIRMED, OrderStatus.SHIPPED,
+      OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED,
+    ];
+    if (notifyStatuses.includes(status)) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: order.userId }, select: { email: true },
+      });
+      if (user?.email) {
+        void this.notifications.sendShippingUpdate(user.email, order.orderNumber, status);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Customer cancels a PENDING or CONFIRMED order.
+   * Restores inventory by creating a RETURN transaction for each item.
+   */
+  async cancelOrder(orderId: string, userId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, userId },
+      include: { items: { include: { product: { include: { inventories: true } } } } },
+    });
+
+    if (!order) throw new NotFoundException('Order not found');
+
+    const cancellable: OrderStatus[] = [OrderStatus.PENDING, OrderStatus.CONFIRMED];
+    if (!cancellable.includes(order.status)) {
+      throw new BadRequestException(
+        `Order in "${order.status}" status cannot be cancelled`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.order.update({
+        where: { id: orderId },
+        data: { status: OrderStatus.CANCELLED },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: { orderId, status: OrderStatus.CANCELLED, notes: 'Cancelled by customer' },
+      });
+
+      // Restore stock: RETURN transaction for each order item
+      for (const item of order.items) {
+        const inventory = item.product.inventories[0];
+        if (inventory) {
+          await tx.inventoryTransaction.create({
+            data: {
+              inventoryId: inventory.id,
+              type: 'RETURN',
+              quantity: item.quantity, // Positive = back in stock
+              reason: `Order ${order.orderNumber} cancelled`,
+            },
+          });
+        }
+      }
 
       return updated;
     });

@@ -195,7 +195,7 @@ export class PaymentsService implements OnModuleInit {
     return { success: true, message: 'Payment verified and order confirmed' };
   }
 
-  // ─── Admin / lookup helpers ──────────────────────────────────────────────
+  // ─── Admin / lookup helpers ───────────────────────────────────────────────
 
   /** Get all payment records for a given order (admin or owner) */
   async getPaymentsForOrder(orderId: string) {
@@ -204,5 +204,195 @@ export class PaymentsService implements OnModuleInit {
       include: { transactions: true },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  // ─── Refunds ──────────────────────────────────────────────────────────────
+
+  /**
+   * Initiate a refund via Razorpay and record it in the database.
+   * Partial refunds are supported — amount must be ≤ original payment amount.
+   */
+  async initiateRefund(paymentId: string, amount: number, reason?: string) {
+    this.ensureRazorpay();
+
+    const payment = await this.prisma.payment.findUnique({
+      where: { id: paymentId },
+      include: { transactions: true, order: true },
+    });
+
+    if (!payment) throw new NotFoundException('Payment not found');
+
+    if (payment.status !== PaymentStatus.SUCCESS) {
+      throw new BadRequestException('Only successful payments can be refunded');
+    }
+
+    if (amount > payment.amount) {
+      throw new BadRequestException(
+        `Refund amount (₹${amount}) exceeds original payment (₹${payment.amount})`,
+      );
+    }
+
+    // The Razorpay payment ID is stored as providerTxnId on the PaymentTransaction
+    const txn = payment.transactions.find((t) => t.providerTxnId);
+    if (!txn?.providerTxnId) {
+      throw new BadRequestException('No Razorpay transaction ID found for this payment');
+    }
+
+    let razorpayRefund: any;
+    try {
+      razorpayRefund = await this.razorpay.payments.refund(txn.providerTxnId, {
+        amount: Math.round(amount * 100), // paise
+        speed: 'normal',
+        notes: { reason: reason ?? 'Refund requested' },
+      });
+    } catch (err) {
+      this.logger.error('Razorpay refund failed', err);
+      throw new InternalServerErrorException('Refund gateway error. Please try again.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const refund = await tx.refund.create({
+        data: {
+          paymentId,
+          orderId: payment.orderId,
+          amount,
+          reason,
+          status: 'PENDING',
+          providerRefundId: razorpayRefund.id,
+        },
+      });
+
+      // Update order to REFUND_PENDING
+      await tx.order.update({
+        where: { id: payment.orderId },
+        data: { status: OrderStatus.REFUND_PENDING },
+      });
+
+      await tx.orderStatusHistory.create({
+        data: {
+          orderId: payment.orderId,
+          status: OrderStatus.REFUND_PENDING,
+          notes: `Refund of ₹${amount} initiated. Razorpay refund: ${razorpayRefund.id}`,
+        },
+      });
+
+      return refund;
+    });
+  }
+
+  // ─── Razorpay Webhook ────────────────────────────────────────────────────
+
+  /**
+   * Handle Razorpay webhook events.
+   * Verify signature using the webhook secret (RAZORPAY_WEBHOOK_SECRET env var).
+   * Handles: payment.captured, refund.processed, refund.failed
+   */
+  async handleWebhook(rawBody: string, signature: string) {
+    const webhookSecret = this.config.get<string>('RAZORPAY_WEBHOOK_SECRET');
+
+    if (webhookSecret) {
+      const expected = crypto
+        .createHmac('sha256', webhookSecret)
+        .update(rawBody)
+        .digest('hex');
+
+      if (expected !== signature) {
+        throw new BadRequestException('Invalid webhook signature');
+      }
+    }
+
+    let event: any;
+    try {
+      event = JSON.parse(rawBody);
+    } catch {
+      throw new BadRequestException('Invalid webhook payload');
+    }
+
+    const eventType: string = event.event;
+    this.logger.log(`Razorpay webhook received: ${eventType}`);
+
+    switch (eventType) {
+      case 'payment.captured': {
+        const rzpPaymentId: string = event.payload?.payment?.entity?.id;
+        const rzpOrderId: string = event.payload?.payment?.entity?.order_id;
+        const method: string = event.payload?.payment?.entity?.method;
+
+        if (rzpPaymentId && rzpOrderId) {
+          const payment = await this.prisma.payment.findFirst({
+            where: { providerId: rzpOrderId },
+          });
+          if (payment && payment.status !== PaymentStatus.SUCCESS) {
+            await this.prisma.payment.update({
+              where: { id: payment.id },
+              data: {
+                status: PaymentStatus.SUCCESS,
+                method: this.mapPaymentMethod(method),
+              },
+            });
+          }
+        }
+        break;
+      }
+
+      case 'refund.processed': {
+        const rzpRefundId: string = event.payload?.refund?.entity?.id;
+        if (rzpRefundId) {
+          await this.prisma.refund.updateMany({
+            where: { providerRefundId: rzpRefundId },
+            data: { status: 'COMPLETED' },
+          });
+
+          // Find the order via the refund and mark REFUNDED
+          const refund = await this.prisma.refund.findFirst({
+            where: { providerRefundId: rzpRefundId },
+          });
+          if (refund) {
+            await this.prisma.order.update({
+              where: { id: refund.orderId },
+              data: { status: OrderStatus.REFUNDED },
+            });
+            await this.prisma.orderStatusHistory.create({
+              data: {
+                orderId: refund.orderId,
+                status: OrderStatus.REFUNDED,
+                notes: `Refund processed. Razorpay refund: ${rzpRefundId}`,
+              },
+            });
+            // Mark payment as REFUNDED
+            await this.prisma.payment.update({
+              where: { id: refund.paymentId },
+              data: { status: PaymentStatus.REFUNDED },
+            });
+          }
+        }
+        break;
+      }
+
+      case 'refund.failed': {
+        const rzpRefundId: string = event.payload?.refund?.entity?.id;
+        if (rzpRefundId) {
+          await this.prisma.refund.updateMany({
+            where: { providerRefundId: rzpRefundId },
+            data: { status: 'FAILED' },
+          });
+        }
+        break;
+      }
+
+      default:
+        this.logger.debug(`Unhandled webhook event: ${eventType}`);
+    }
+
+    return { received: true };
+  }
+
+  private mapPaymentMethod(method: string): PaymentMethod {
+    const map: Record<string, PaymentMethod> = {
+      upi: PaymentMethod.UPI,
+      card: PaymentMethod.CARD,
+      netbanking: PaymentMethod.NETBANKING,
+      wallet: PaymentMethod.WALLET,
+    };
+    return map[method?.toLowerCase()] ?? PaymentMethod.UPI;
   }
 }
