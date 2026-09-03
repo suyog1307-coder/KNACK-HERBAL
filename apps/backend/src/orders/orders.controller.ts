@@ -35,22 +35,24 @@ export class OrdersController {
   @Roles('CUSTOMER')
   @Post()
   createOrder(@Request() req, @Body() dto: CreateOrderDto) {
-    return this.ordersService.createOrderFromCart(req.user.sub, dto.addressId);
+    return this.ordersService.createOrderFromCart(req.user.id, dto.addressId);
   }
 
   @ApiOperation({ summary: 'Get all orders for the authenticated customer' })
   @Roles('CUSTOMER')
   @Get('my-orders')
   getMyOrders(@Request() req) {
-    return this.ordersService.getMyOrders(req.user.sub);
+    return this.ordersService.getMyOrders(req.user.id);
   }
 
-  @ApiOperation({ summary: 'Get a specific order (must belong to the customer)' })
+  @ApiOperation({
+    summary: 'Get a specific order (must belong to the customer)',
+  })
   @ApiParam({ name: 'id', description: 'Order UUID' })
   @Roles('CUSTOMER')
   @Get('my-orders/:id')
   getOrderById(@Param('id') id: string, @Request() req) {
-    return this.ordersService.getOrderById(id, req.user.sub);
+    return this.ordersService.getOrderById(id, req.user.id);
   }
 
   @ApiOperation({ summary: 'Cancel a pending or confirmed order' })
@@ -58,7 +60,7 @@ export class OrdersController {
   @Roles('CUSTOMER')
   @Patch('my-orders/:id/cancel')
   cancelOrder(@Param('id') id: string, @Request() req) {
-    return this.ordersService.cancelOrder(id, req.user.sub);
+    return this.ordersService.cancelOrder(id, req.user.id);
   }
 
   @ApiOperation({ summary: 'Request a return on a delivered order' })
@@ -70,7 +72,7 @@ export class OrdersController {
     @Request() req,
     @Body() dto: { reason: string },
   ) {
-    return this.ordersService.requestReturn(id, req.user.sub, dto.reason);
+    return this.ordersService.requestReturn(id, req.user.id, dto.reason);
   }
 
   // ─── Admin routes ─────────────────────────────────────────────────────────

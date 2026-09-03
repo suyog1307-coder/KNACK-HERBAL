@@ -1,0 +1,36 @@
+# ── Source control ───────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ── Node / pnpm ───────────────────────────────────────────────────────────────
+**/node_modules
+**/.pnpm-store
+
+# ── Build artefacts ───────────────────────────────────────────────────────────
+apps/backend/dist
+apps/web/.next
+apps/web/out
+
+# ── Test / coverage ───────────────────────────────────────────────────────────
+**/coverage
+**/*.spec.ts
+**/*.e2e-spec.ts
+**/test
+
+# ── Dev tooling ───────────────────────────────────────────────────────────────
+.husky
+.vscode
+.github
+*.log
+*.tsbuildinfo
+
+# ── Secrets (never bake into image) ──────────────────────────────────────────
+apps/backend/.env
+apps/backend/.env.*
+.env
+.env.*
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+README.md
+*.sql

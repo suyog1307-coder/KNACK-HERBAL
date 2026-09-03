@@ -36,9 +36,42 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-  # ── Backend tests ──────────────────────────────────────────────────────────
-  test-backend:
-    name: Backend Tests
+  # ── Unit Tests ────────────────────────────────────────────────────────────
+  test-unit:
+    name: Backend Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter backend exec prisma generate
+
+      - name: Run unit tests with coverage
+        run: pnpm --filter backend test:cov
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: apps/backend/coverage/
+          retention-days: 14
+
+  # ── E2E Tests ─────────────────────────────────────────────────────────────
+  test-e2e:
+    name: Backend E2E Tests
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -60,6 +93,7 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/knack_herbal_test?schema=public
       JWT_SECRET: test_jwt_secret_ci
       JWT_REFRESH_SECRET: test_refresh_secret_ci
+      PORT: 3000
 
     steps:
       - uses: actions/checkout@v4
@@ -82,14 +116,14 @@ jobs:
       - name: Run migrations
         run: pnpm --filter backend exec prisma migrate deploy
 
-      - name: Run tests
-        run: pnpm --filter backend test
+      - name: Run E2E tests
+        run: pnpm --filter backend test:e2e
 
   # ── Build ─────────────────────────────────────────────────────────────────
   build:
-    name: Build
+    name: Build All
     runs-on: ubuntu-latest
-    needs: [lint, test-backend]
+    needs: [lint, test-unit, test-e2e]
     steps:
       - uses: actions/checkout@v4
 
@@ -111,7 +145,27 @@ jobs:
       - name: Build backend
         run: pnpm --filter backend run build
 
+      - name: Upload backend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dist
+          path: apps/backend/dist/
+          retention-days: 7
+
       - name: Build web
         run: pnpm --filter web run build
         env:
           NEXT_PUBLIC_API_URL: http://localhost:3000/api/v1
+
+  # ── Docker ────────────────────────────────────────────────────────────────
+  docker-validate:
+    name: Validate Docker Compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate production compose config
+        run: docker compose -f infrastructure/docker/docker-compose.yml config > /dev/null
+
+      - name: Validate dev compose config
+        run: docker compose -f infrastructure/docker/docker-compose.dev.yml config > /dev/null

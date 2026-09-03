@@ -38,12 +38,14 @@ export class PaymentsController {
   @Roles('CUSTOMER')
   @Post('create/:orderId')
   createRazorpayOrder(@Request() req, @Param('orderId') orderId: string) {
-    return this.paymentsService.createRazorpayOrder(orderId, req.user.sub);
+    return this.paymentsService.createRazorpayOrder(orderId, req.user.id);
   }
 
   // ─── Public: verify payment (called by frontend after Razorpay success) ───
 
-  @ApiOperation({ summary: 'Verify Razorpay payment signature and confirm order' })
+  @ApiOperation({
+    summary: 'Verify Razorpay payment signature and confirm order',
+  })
   @Post('verify')
   verifyPayment(@Body() dto: VerifyPaymentDto) {
     return this.paymentsService.verifyPayment(
@@ -61,19 +63,27 @@ export class PaymentsController {
     @Req() req: RawBodyRequest<Request>,
     @Headers('x-razorpay-signature') signature: string,
   ) {
-    const rawBody = (req as any).rawBody?.toString('utf8') ?? JSON.stringify((req as any).body);
+    const rawBody =
+      (req as any).rawBody?.toString('utf8') ??
+      JSON.stringify((req as any).body);
     return this.paymentsService.handleWebhook(rawBody, signature);
   }
 
   // ─── Admin: initiate refund ───────────────────────────────────────────────
 
-  @ApiOperation({ summary: '[Admin] Initiate a refund for a successful payment' })
+  @ApiOperation({
+    summary: '[Admin] Initiate a refund for a successful payment',
+  })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
   @Post('refund')
   initiateRefund(@Body() dto: InitiateRefundDto) {
-    return this.paymentsService.initiateRefund(dto.paymentId, dto.amount, dto.reason);
+    return this.paymentsService.initiateRefund(
+      dto.paymentId,
+      dto.amount,
+      dto.reason,
+    );
   }
 
   // ─── Shared: get payments for an order ───────────────────────────────────

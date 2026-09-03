@@ -1,0 +1,52 @@
+# ──────────────────────────────────────────────────────────────────────────────
+#  Knack Herbal — Local Development Compose
+#
+#  Starts only the infrastructure services (Postgres + Redis).
+#  The NestJS backend and Next.js frontend are run directly on your host
+#  with hot-reload:
+#
+#    pnpm --filter backend start:dev
+#    pnpm --filter web dev
+#
+#  Usage:
+#    docker compose -f infrastructure/docker/docker-compose.dev.yml up -d
+#    docker compose -f infrastructure/docker/docker-compose.dev.yml down
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: knack_postgres_dev
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: student
+      POSTGRES_DB: knack_herbal
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: knack_redis_dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
